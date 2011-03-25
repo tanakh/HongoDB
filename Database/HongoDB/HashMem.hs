@@ -11,6 +11,7 @@ import Control.Applicative
 import Control.Monad.Reader
 import Control.Monad.Trans
 import qualified Data.ByteString.Char8 as B
+import qualified Data.Enumerator as E
 import qualified Data.HashMap.Strict as HM
 import Data.IORef
 
@@ -32,7 +33,17 @@ instance (MonadIO m) => DB (HashDB m) where
   count = withTable $ \t -> do
     return $ HM.size t
 
-  clear = return ()
+  clear = modifyTable $ \_ ->
+    return (HM.empty, ())
+  
+  enum = withTable $ \t -> do 
+    return $ go (HM.toList t)
+    where
+      go [] (E.Continue k) = E.continue k
+      go xs (E.Continue k) =
+        let (as, bs) = splitAt 256 xs in
+        k (E.Chunks as) E.>>== go bs
+      go _ step = E.returnI step
 
 withTable :: MonadIO m => (Table -> HashDB m a) -> HashDB m a
 withTable f = do

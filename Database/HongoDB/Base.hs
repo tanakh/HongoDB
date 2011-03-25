@@ -4,6 +4,7 @@ module Database.HongoDB.Base (
   ) where
 
 import qualified Data.ByteString.Char8 as B
+import qualified Data.Enumerator as E
 import Data.Maybe
 
 data Action
@@ -12,9 +13,9 @@ data Action
   | Nop
 
 class (Monad m) => DB m where
-  accept :: B.ByteString ->
-            (Maybe B.ByteString -> m (Action, a)) ->
-            m a
+  accept :: B.ByteString
+            -> (Maybe B.ByteString -> m (Action, a))
+            -> m a
   
   get :: B.ByteString -> m (Maybe B.ByteString)
   get key = accept key $ \r -> return (Nop, r)
@@ -33,4 +34,4 @@ class (Monad m) => DB m where
   count :: m Int
   clear :: m ()
 
-  -- enum :: m (E.Enumerator B.ByteString m a)
+  enum :: m (E.Enumerator (B.ByteString, B.ByteString) m a)
