@@ -9,7 +9,7 @@ import System.IO
 
 main :: IO ()
 main = do
-  runHashDB $ do
+  runHashMem $ do
     set "a" "b"
     set "c" "d"
     v <- get "a"

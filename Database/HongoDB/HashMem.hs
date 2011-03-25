@@ -1,13 +1,15 @@
 {-# Language GeneralizedNewtypeDeriving #-}
 
 module Database.HongoDB.HashMem (
-  HashDB,
-  runHashDB,
+  HashMem,
+  runHashMem,
   ) where
 
 import Database.HongoDB.Base
 
 import Control.Applicative
+import Control.Exception.Control
+import Control.Monad.IO.Control
 import Control.Monad.Reader
 import Control.Monad.Trans
 import qualified Data.ByteString.Char8 as B
@@ -17,11 +19,11 @@ import Data.IORef
 
 type Table = HM.HashMap B.ByteString B.ByteString
 
-newtype HashDB m a =
-  HashDB { unHashDB :: ReaderT (IORef Table) m a }
-  deriving (Monad, MonadIO, MonadTrans, Functor, Applicative)
+newtype HashMem m a =
+  HashMem { unHashMem :: ReaderT (IORef Table) m a }
+  deriving (Monad, MonadIO, MonadTrans, Functor, Applicative, MonadControlIO)
 
-instance (MonadIO m) => DB (HashDB m) where
+instance (MonadControlIO m) => DB (HashMem m) where
   accept key f = modifyTable $ \t -> do
     (act, r) <- f (HM.lookup key t)
     let nt = case act of
@@ -45,19 +47,19 @@ instance (MonadIO m) => DB (HashDB m) where
         k (E.Chunks as) E.>>== go bs
       go _ step = E.returnI step
 
-withTable :: MonadIO m => (Table -> HashDB m a) -> HashDB m a
+withTable :: MonadIO m => (Table -> HashMem m a) -> HashMem m a
 withTable f = do
-  r <- HashDB ask
+  r <- HashMem ask
   f =<< (liftIO $ readIORef r)
 
-modifyTable :: MonadIO m => (Table -> HashDB m (Table, a)) -> HashDB m a
+modifyTable :: MonadIO m => (Table -> HashMem m (Table, a)) -> HashMem m a
 modifyTable f = do
-  r <- HashDB ask
+  r <- HashMem ask
   (t, v) <- f =<< (liftIO  $ readIORef r)
   liftIO $ writeIORef r t
   return v
 
-runHashDB :: MonadIO m => HashDB m a -> m a
-runHashDB hdb = do
+runHashMem :: MonadIO m => HashMem m a -> m a
+runHashMem hdb = do
   ref <- liftIO $ newIORef HM.empty
-  runReaderT (unHashDB hdb) ref
+  runReaderT (unHashMem hdb) ref

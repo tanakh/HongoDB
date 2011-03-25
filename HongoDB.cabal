@@ -46,6 +46,8 @@ Library
   -- Modules exported by the library.
   Exposed-modules:     Database.HongoDB
                        Database.HongoDB.Base
+                       Database.HongoDB.HashMem
+                       Database.HongoDB.HashFile
   
   -- Packages needed in order to build this package.
   Build-depends:       base >= 4 && < 5
@@ -53,6 +55,7 @@ Library
                      , mtl >= 2.0 && < 2.1
                      , unordered-containers >= 0.1 && < 0.2
                      , enumerator >= 0.4 && < 0.5
+                     , monad-control >= 0.2 && < 0.3
  
   -- Modules not exported by this package.
   -- Other-modules:       
