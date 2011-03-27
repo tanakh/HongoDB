@@ -1,0 +1,16 @@
+-- TODO list
+
+- HashFile
+-- Missing methods
+-- Free block pool
+-- Resize
+-- GC
+-- Transaction support
+-- Parallelize
+-- Benchmark & Tuning
+-- File checker
+-- Refactoring
+
+- Distributed server
+-- Msgpack RPC
+-- Memcached protocol support
