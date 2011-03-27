@@ -1,7 +1,6 @@
 {-# Language OverloadedStrings #-}
 
 import Database.HongoDB
-import Database.HongoDB.HashFile
 
 import qualified Data.ByteString as B
 import Control.Monad
