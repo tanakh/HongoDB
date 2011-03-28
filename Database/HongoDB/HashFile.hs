@@ -46,13 +46,12 @@ openHashFile :: FilePath -> IO F.File
 openHashFile path = do
   b <- doesFileExist path
   f <- F.open path
-  when (not b) $ do
+  unless b $
     initHashFile f
   return f
 
 closeHashFile :: F.File -> IO ()
-closeHashFile f =
-  F.close f
+closeHashFile = F.close
 
 data Header =
   Header
@@ -197,7 +196,7 @@ emptyEntry :: Int
 emptyEntry = 0xffffffffffff
 
 readHeader :: F.File -> IO Header
-readHeader f = do
+readHeader f =
   toHeader <$> F.read f headerSize 0
 
 runHashFile :: MonadControlIO m => F.File -> HashFile m a -> m a
@@ -322,7 +321,7 @@ lookup' key stat = do
         -- TODO: FIXME: when read less than key length
         (r, whole) <- readPartialRecord cur stat
         if rkey r == key
-          then do
+          then
           if whole
             then Just <$> return (r, (bef, cur))
             else Just . (, (bef, cur)) <$> readCompleteRecord cur r stat
@@ -354,7 +353,7 @@ insert key val stat = do
         else do
         -- remove and add
         -- 1. rewrite before's link
-        when (bef /= emptyEntry) $ do
+        when (bef /= emptyEntry) $
           -- if current record has parent
           writeNext bef (rnext r) stat
         -- 2. alloc new record
@@ -375,11 +374,11 @@ instance MonadControlIO m => H.DB (HashFile m) where
     mval <- liftIO $ lookup key stat
     (act, r) <- f mval
     case act of
-      H.Replace val -> do
+      H.Replace val ->
         liftIO $ insert key val stat
-      H.Remove -> do
+      H.Remove ->
         liftIO $ remove key stat
-      H.Nop -> do
+      H.Nop ->
         return ()
     return r
 

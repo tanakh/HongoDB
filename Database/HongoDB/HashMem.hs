@@ -32,13 +32,13 @@ instance (MonadControlIO m) => DB (HashMem m) where
           Nop -> t
     return (nt, r)
   
-  count = withTable $ \t -> do
+  count = withTable $ \t ->
     return $ HM.size t
 
   clear = modifyTable $ \_ ->
     return (HM.empty, ())
   
-  enum = withTable $ \t -> do 
+  enum = withTable $ \t ->
     return $ go (HM.toList t)
     where
       go [] (E.Continue k) = E.continue k
@@ -50,12 +50,12 @@ instance (MonadControlIO m) => DB (HashMem m) where
 withTable :: MonadIO m => (Table -> HashMem m a) -> HashMem m a
 withTable f = do
   r <- HashMem ask
-  f =<< (liftIO $ readIORef r)
+  f =<< liftIO readIORef r
 
 modifyTable :: MonadIO m => (Table -> HashMem m (Table, a)) -> HashMem m a
 modifyTable f = do
   r <- HashMem ask
-  (t, v) <- f =<< (liftIO  $ readIORef r)
+  (t, v) <- f =<< liftIO readIORef r
   liftIO $ writeIORef r t
   return v
 
