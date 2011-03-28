@@ -41,14 +41,11 @@ Build-type:          Simple
 -- Constraint on the version of Cabal needed to build this package.
 Cabal-version:       >=1.6
 
+Source-repository head
+  Type:                git
+  Location:            git://github.com/tanakh/HongoDB.git
 
 Library
-  -- Modules exported by the library.
-  Exposed-modules:     Database.HongoDB
-                       Database.HongoDB.Base
-                       Database.HongoDB.HashMem
-                       Database.HongoDB.HashFile
-  
   -- Packages needed in order to build this package.
   Build-depends:       base >= 4 && < 5
                      , bytestring >= 0.9 && < 0.10
@@ -64,6 +61,12 @@ Library
                      , attoparsec-binary >= 0.1 && < 0.2
                      , hashable >= 1.1 && < 1.2
  
+  -- Modules exported by the library.
+  Exposed-modules:     Database.HongoDB
+                       Database.HongoDB.Base
+                       Database.HongoDB.HashMem
+                       Database.HongoDB.HashFile
+  
   -- Modules not exported by this package.
   Other-modules:       Database.HongoDB.Internal.File
   
