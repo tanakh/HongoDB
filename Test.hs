@@ -2,17 +2,19 @@
 
 import Database.HongoDB
 
-import qualified Data.ByteString as B
 import Control.Monad
 import Control.Monad.Trans
 import Data.Enumerator as E
 import Data.Enumerator.List as EL
 import System.Directory
-import System.IO
 
-{-
 main :: IO ()
 main = do
+  testHashMem
+  testHashFile
+
+testHashMem :: IO ()
+testHashMem = do
   runHashMem $ do
     set "a" "b"
     set "c" "d"
@@ -28,12 +30,11 @@ main = do
     run_ $ e $$ f
   
   return ()
--}
 
 fname = "tmp.hgdb"
 
-main :: IO ()
-main = do
+testHashFile :: IO ()
+testHashFile = do
   e <- doesFileExist fname
   when e $ removeFile fname
   f <- openHashFile fname
@@ -64,6 +65,15 @@ main = do
     set "a" "a"
     set "b" "b"
     set "c" "c"
+  
+  runHashFile f $ do
+    e <- enum
+    let f = do
+          mkv <- EL.head
+          case mkv of
+            Just kv -> liftIO (print ("enum", kv)) >> f
+            Nothing -> return ()
+    run_ $ e $$ f
 
   runHashFile f $ do
     liftIO . print =<< count

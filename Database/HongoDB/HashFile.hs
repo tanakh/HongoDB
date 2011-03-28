@@ -20,6 +20,7 @@ import qualified Data.Attoparsec as A
 import qualified Data.Attoparsec.Binary as A
 import Data.Bits
 import qualified Data.ByteString as B
+import qualified Data.Enumerator as E
 import Data.Hashable
 import Data.Int
 import Data.IORef
@@ -264,6 +265,13 @@ readCompleteRecord ofs r HashFileState { file = f, header = hr } = do
     A.Done _ v -> return v
     _ -> error "readComplete: failed"
 
+readCompleteRecord' :: Int -> HashFileState -> IO Record
+readCompleteRecord' ofs stat = do
+  (pr, whole) <- readPartialRecord ofs stat
+  if whole
+    then return pr
+    else readCompleteRecord ofs pr stat
+
 addRecord :: Record -> HashFileState -> IO Int
 addRecord r stat @ (HashFileState { header = hr }) = do
   -- TODO: first search free pool
@@ -419,7 +427,35 @@ instance MonadControlIO m => H.DB (HashFile m) where
     h <- liftIO $ readHeader (file stat)
     liftIO $ writeIORef (header stat) h
     
-  enum = undefined
+  enum = return go where
+    go step = do
+      stat <- lift $ HashFile ask
+      h <- liftIO $ readIORef (header stat)
+      liftIO $ print h
+      go' 0 (bucketSize h) stat step
+    
+    go' bix bsize stat step@(E.Continue f)
+      | bix >= bsize =
+        E.returnI step
+      | otherwise = do
+        pos <- liftIO $ readBucket bix stat
+        if pos /= emptyEntry
+          then do
+          kvs <- liftIO $ readLink pos stat
+          f (E.Chunks kvs) E.>>== go' (bix+1) bsize stat
+          else
+          go' (bix+1) bsize stat step
+
+    go' _ _ _ step =
+      E.returnI step
+    
+readLink :: Int -> HashFileState -> IO [(B.ByteString, B.ByteString)]
+readLink pos stat
+  | pos == emptyEntry = return []
+  | otherwise = do
+    r  <- readCompleteRecord' pos stat
+    rs <- readLink (rnext r) stat
+    return $ (rkey r, rval r) : rs
 
 withState :: MonadControlIO m => (HashFileState -> HashFile m a) -> HashFile m a
 withState f = do
