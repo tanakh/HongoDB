@@ -349,7 +349,7 @@ insert key val stat = do
       if curSize >= newSize && curSize <= newSize * 2
         then do
         -- replace
-        writeRecord cur (nr { rnext = toplink }) stat
+        writeRecord cur (r { rval = val }) stat
         return ()
         else do
         -- remove and add
@@ -358,7 +358,8 @@ insert key val stat = do
           -- if current record has parent
           writeNext bef (rnext r) stat
         -- 2. alloc new record
-        nhead <- addRecord (nr { rnext = toplink }) stat
+        let nlink = if bef /= emptyEntry then toplink else rnext r
+        nhead <- addRecord (nr { rnext = nlink }) stat
         -- 3. rewrite bucket's link
         writeBucket bix nhead stat
         -- 4. add current to free pool
@@ -366,7 +367,22 @@ insert key val stat = do
         return ()
 
 remove :: B.ByteString -> HashFileState -> IO ()
-remove = undefined
+remove key stat = do
+  sz <- bucketSize <$> readIORef (header stat)
+  let ha = hash key
+  let bix = ha `mod` sz
+  mbv <- lookup' key stat
+  case mbv of
+    Nothing ->
+      return ()
+    Just (r, (bef, _)) -> do
+      if bef /= emptyEntry
+        then do
+        writeNext bef (rnext r) stat
+        else do
+        writeBucket bix (rnext r) stat
+      -- TODO: add current to free pool
+      return ()
 
 --
 

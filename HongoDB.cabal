@@ -72,6 +72,8 @@ Library
   
   -- Extra tools (e.g. alex, hsc2hs, ...) needed to build the source.
   -- Build-tools:         
+
+  Ghc-options:         -Wall
   
 
 Test-suite test

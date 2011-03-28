@@ -49,6 +49,8 @@ main = do
     liftIO . print =<< get "a"
     liftIO . print =<< get "b"
     liftIO . print =<< get "c"
+    remove "a"
+    liftIO . print =<< get "a"
   closeHashFile f
   
   return ()
