@@ -1,9 +1,14 @@
 -- TODO list
 
+- Haddock
+
+- README.md
+
 - HashFile
 -- Missing methods
 -- Free block pool
 -- Resize
+-- 0.0.1 ?
 -- GC
 -- Transaction support
 -- Parallelize
@@ -14,3 +19,7 @@
 - Distributed server
 -- Msgpack RPC
 -- Memcached protocol support
+
+- Bug
+-- Concurrent use of HashFile
+--- openHashFile should return HashFileState

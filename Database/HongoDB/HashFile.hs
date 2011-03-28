@@ -74,8 +74,8 @@ data Header =
   }
   deriving (Show)
 
-fromHeader :: Header -> BB.Builder
-fromHeader h = BB.fromWrite $
+fromHeader :: Header -> B.ByteString
+fromHeader h = BB.toByteString $ BB.fromWrite $
   BB.writeByteString (magic h) `mappend`
   BB.writeInt8 (fst $ version h) `mappend`
   BB.writeInt8 (snd $ version h) `mappend`
@@ -190,12 +190,13 @@ initialHeader =
 
 headerSize :: Int
 headerSize =
-  B.length $ BB.toByteString $ fromHeader emptyHeader
+  B.length $ fromHeader emptyHeader
 
 initHashFile :: F.File -> IO ()
 initHashFile f = do
   let h = initialHeader
-  F.write f (BB.toByteString $ fromHeader h) 0
+  F.clear f
+  writeHeader f h
   F.write f (B.replicate (bucketSize h * 6) 0xff) (bucketStart h)
   F.write f (B.replicate (freeBlockSize h * 6) 0xff) (freeBlockStart h)
 
@@ -205,6 +206,10 @@ emptyEntry = 0xffffffffffff
 readHeader :: F.File -> IO Header
 readHeader f =
   toHeader <$> F.read f headerSize 0
+
+writeHeader :: F.File -> Header -> IO ()
+writeHeader f h =
+  F.write f (fromHeader h) 0
 
 --
 
@@ -409,7 +414,11 @@ instance MonadControlIO m => H.DB (HashFile m) where
     h <- liftIO $ readIORef $ header stat
     return $ recordSize h
   
-  clear = undefined
+  clear = withState $ \stat -> do
+    liftIO $ initHashFile (file stat)
+    h <- liftIO $ readHeader (file stat)
+    liftIO $ writeIORef (header stat) h
+    
   enum = undefined
 
 withState :: MonadControlIO m => (HashFileState -> HashFile m a) -> HashFile m a
@@ -424,4 +433,7 @@ runHashFile :: MonadControlIO m => F.File -> HashFile m a -> m a
 runHashFile f db = do
   h <- liftIO $ readHeader f
   r <- liftIO $ HashFileState f <$> newIORef h <*> newMVar ()
-  runReaderT (unHashFile db) r
+  v <- runReaderT (unHashFile db) r
+  nh <- liftIO $ readIORef (header r)
+  liftIO $ writeHeader f nh
+  return v

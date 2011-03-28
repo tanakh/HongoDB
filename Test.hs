@@ -59,6 +59,19 @@ main = do
     liftIO . print =<< get "a"
     remove "c"
     liftIO . print =<< count
+  
+  runHashFile f $ do
+    set "a" "a"
+    set "b" "b"
+    set "c" "c"
+
+  runHashFile f $ do
+    liftIO . print =<< count
+    liftIO . print =<< get "c"
+    clear
+    liftIO . print =<< count
+    liftIO . print =<< get "c"
+
   closeHashFile f
   
   return ()
