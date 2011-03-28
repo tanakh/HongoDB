@@ -28,8 +28,11 @@ import System.Directory
 
 import Prelude hiding (lookup)
 
-magicString = "HHDB" :: B.ByteString
-formatVersion = (0 :: Int8, 0 :: Int8)
+magicString :: B.ByteString
+magicString = "HHDB"
+
+formatVersion :: (Int8, Int8)
+formatVersion = (0, 0)
 
 newtype HashFile m a =
   HashFile { unHashFile :: ReaderT HashFileState m a }
@@ -95,8 +98,8 @@ writeVInt n
     writeVInt (n `div` 128)
 
 -- TODO: optimize
-vlen :: Int -> Int
-vlen = B.length . BB.toByteString . BB.fromWrite . writeVInt
+-- vlen :: Int -> Int
+-- vlen = B.length . BB.toByteString . BB.fromWrite . writeVInt
 
 parseHeader :: A.Parser Header
 parseHeader =
@@ -146,8 +149,8 @@ toInt48le bs =
 
 nextPrime :: Int -> Int
 nextPrime n = head $ filter isPrime [n..] where
-  isPrime n = and [ n`mod`i /= 0
-                  | i <- [2 .. floor (sqrt (fromIntegral n))]]
+  isPrime a = and [ a`mod`i /= 0
+                  | i <- [2 .. floor (sqrt (fromIntegral a) :: Double)]]
 
 emptyHeader :: Header
 emptyHeader =
@@ -251,17 +254,15 @@ readPartialRecord ofs HashFileState { file = f, header = hr } = do
 
 readCompleteRecord :: Int -> Record -> HashFileState -> IO Record
 readCompleteRecord ofs r HashFileState { file = f, header = hr } = do
-  let rsize = 6 +
-              vlen (B.length $ rkey r) + vlen (B.length $ rval r) +
-              B.length (rkey r) + B.length (rval r)
+  let rsize = sizeRecord r
   h <- readIORef hr
   bs <- F.read f rsize (recordStart h + ofs)
   case A.parse parseRecord bs of
-    A.Done _ r -> return r
+    A.Done _ v -> return v
     _ -> error "readComplete: failed"
 
 addRecord :: Record -> HashFileState -> IO Int
-addRecord r stat @ (HashFileState { file = f, header = hr }) = do
+addRecord r stat @ (HashFileState { header = hr }) = do
   -- TODO: first search free pool
   h <- readIORef hr
   let st = recordStart h
@@ -365,7 +366,7 @@ insert key val stat = do
         return ()
 
 remove :: B.ByteString -> HashFileState -> IO ()
-remove key stat = undefined
+remove = undefined
 
 --
 
@@ -381,6 +382,10 @@ instance MonadControlIO m => H.DB (HashFile m) where
       H.Nop ->
         return ()
     return r
+  
+  clear = undefined
+  count = undefined
+  enum = undefined
 
 withState :: MonadControlIO m => (HashFileState -> HashFile m a) -> HashFile m a
 withState f = do

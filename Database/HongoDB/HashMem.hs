@@ -8,10 +8,8 @@ module Database.HongoDB.HashMem (
 import Database.HongoDB.Base
 
 import Control.Applicative
-import Control.Exception.Control
 import Control.Monad.IO.Control
 import Control.Monad.Reader
-import Control.Monad.Trans
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Enumerator as E
 import qualified Data.HashMap.Strict as HM
@@ -50,12 +48,12 @@ instance (MonadControlIO m) => DB (HashMem m) where
 withTable :: MonadIO m => (Table -> HashMem m a) -> HashMem m a
 withTable f = do
   r <- HashMem ask
-  f =<< liftIO readIORef r
+  f =<< liftIO (readIORef r)
 
 modifyTable :: MonadIO m => (Table -> HashMem m (Table, a)) -> HashMem m a
 modifyTable f = do
   r <- HashMem ask
-  (t, v) <- f =<< liftIO readIORef r
+  (t, v) <- f =<< liftIO (readIORef r)
   liftIO $ writeIORef r t
   return v
 
