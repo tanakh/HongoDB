@@ -38,19 +38,27 @@ main = do
   when e $ removeFile fname
   f <- openHashFile fname
   runHashFile f $ do
+    liftIO . print =<< count
     set "a" "b"
+    liftIO . print =<< count
     set "c" "d"
+    liftIO . print =<< count
     liftIO . print =<< get "a"
     liftIO . print =<< get "b"
     liftIO . print =<< get "c"
     set "a" "x"
+    liftIO . print =<< count
     liftIO . print =<< get "a"
     set "a" "xyz"
+    liftIO . print =<< count
     liftIO . print =<< get "a"
     liftIO . print =<< get "b"
     liftIO . print =<< get "c"
     remove "a"
+    liftIO . print =<< count
     liftIO . print =<< get "a"
+    remove "c"
+    liftIO . print =<< count
   closeHashFile f
   
   return ()

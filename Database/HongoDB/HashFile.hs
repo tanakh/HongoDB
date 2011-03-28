@@ -45,6 +45,10 @@ data HashFileState =
   , lock :: MVar ()
   }
 
+modifyHeader :: (Header -> Header) -> HashFileState -> IO ()
+modifyHeader mf stat = do
+  modifyIORef (header stat) mf
+
 openHashFile :: FilePath -> IO F.File
 openHashFile path = do
   b <- doesFileExist path
@@ -202,12 +206,6 @@ readHeader :: F.File -> IO Header
 readHeader f =
   toHeader <$> F.read f headerSize 0
 
-runHashFile :: MonadControlIO m => F.File -> HashFile m a -> m a
-runHashFile f db = do
-  h <- liftIO $ readHeader f
-  r <- liftIO $ HashFileState f <$> newIORef h <*> newMVar ()
-  runReaderT (unHashFile db) r
-
 --
 
 data Record =
@@ -340,6 +338,7 @@ insert key val stat = do
     Nothing -> do
       nhead <- addRecord nr stat
       writeBucket bix nhead stat
+      incRecordSize stat
     Just (r, (bef, cur)) -> do
       let curSize = sizeRecord r
           newSize = sizeRecord nr
@@ -349,7 +348,7 @@ insert key val stat = do
       if curSize >= newSize && curSize <= newSize * 2
         then do
         -- replace
-        writeRecord cur (r { rval = val }) stat
+        _ <- writeRecord cur (r { rval = val }) stat
         return ()
         else do
         -- remove and add
@@ -382,7 +381,14 @@ remove key stat = do
         else do
         writeBucket bix (rnext r) stat
       -- TODO: add current to free pool
+      decRecordSize stat
       return ()
+
+incRecordSize :: HashFileState -> IO ()
+incRecordSize = modifyHeader (\h -> h { recordSize = recordSize h + 1 })
+
+decRecordSize :: HashFileState -> IO ()
+decRecordSize = modifyHeader (\h -> h { recordSize = recordSize h - 1 })
 
 --
 
@@ -399,8 +405,11 @@ instance MonadControlIO m => H.DB (HashFile m) where
         return ()
     return r
   
+  count = withState $ \stat -> do
+    h <- liftIO $ readIORef $ header stat
+    return $ recordSize h
+  
   clear = undefined
-  count = undefined
   enum = undefined
 
 withState :: MonadControlIO m => (HashFileState -> HashFile m a) -> HashFile m a
@@ -410,3 +419,9 @@ withState f = do
     (liftIO $ takeMVar l)
     (liftIO . putMVar l)
     (\_ -> f =<< HashFile ask)
+
+runHashFile :: MonadControlIO m => F.File -> HashFile m a -> m a
+runHashFile f db = do
+  h <- liftIO $ readHeader f
+  r <- liftIO $ HashFileState f <$> newIORef h <*> newMVar ()
+  runReaderT (unHashFile db) r
