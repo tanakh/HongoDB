@@ -2,6 +2,7 @@
 
 module Database.HongoDB.HashFile (
   HashFile,
+  HashFileState,
   openHashFile, closeHashFile,
   runHashFile,
   ) where
@@ -50,16 +51,24 @@ modifyHeader :: (Header -> Header) -> HashFileState -> IO ()
 modifyHeader mf stat = do
   modifyIORef (header stat) mf
 
-openHashFile :: FilePath -> IO F.File
+openHashFile :: FilePath -> IO HashFileState
 openHashFile path = do
   b <- doesFileExist path
   f <- F.open path
   unless b $
     initHashFile f
-  return f
+  h <- newIORef =<< readHeader f
+  l <- newMVar ()
+  return $ HashFileState
+    { file = f
+    , header = h
+    , lock = l
+    }
 
-closeHashFile :: F.File -> IO ()
-closeHashFile = F.close
+closeHashFile :: HashFileState -> IO ()
+closeHashFile stat = do
+  h <- readIORef $ header stat
+  writeHeader (file stat) h
 
 data Header =
   Header
@@ -465,11 +474,6 @@ withState f = do
     (liftIO . putMVar l)
     (\_ -> f =<< HashFile ask)
 
-runHashFile :: MonadControlIO m => F.File -> HashFile m a -> m a
-runHashFile f db = do
-  h <- liftIO $ readHeader f
-  r <- liftIO $ HashFileState f <$> newIORef h <*> newMVar ()
-  v <- runReaderT (unHashFile db) r
-  nh <- liftIO $ readIORef (header r)
-  liftIO $ writeHeader f nh
-  return v
+runHashFile :: MonadControlIO m => HashFileState -> HashFile m a -> m a
+runHashFile stat db = do
+  runReaderT (unHashFile db) stat
