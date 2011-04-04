@@ -1,4 +1,4 @@
-{-# Language OverloadedStrings, GeneralizedNewtypeDeriving, TupleSections #-}
+{-# Language MultiParamTypeClasses, OverloadedStrings, GeneralizedNewtypeDeriving, TupleSections #-}
 
 module Database.HongoDB.HashFile (
   HashFile,
@@ -40,6 +40,10 @@ newtype HashFile m a =
   HashFile { unHashFile :: ReaderT HashFileState m a }
   deriving (Monad, MonadIO, MonadTrans, Functor, Applicative, MonadControlIO)
 
+instance Monad m => MonadReader HashFileState (HashFile m) where
+  ask = HashFile ask
+  local f m = HashFile $ local f (unHashFile m)
+
 data HashFileState =
   HashFileState
   { file   :: F.File
@@ -47,9 +51,18 @@ data HashFileState =
   , lock :: MVar ()
   }
 
-modifyHeader :: (Header -> Header) -> HashFileState -> IO ()
-modifyHeader mf stat = do
-  modifyIORef (header stat) mf
+askHeader :: MonadIO m => HashFile m Header
+askHeader =
+  liftIO . readIORef =<< asks header
+
+putHeader :: MonadIO m => Header -> HashFile m ()
+putHeader h =
+  liftIO . flip writeIORef h =<< asks header
+
+modifyHeader :: MonadIO m => (Header -> Header) -> HashFile m ()
+modifyHeader mf = do
+  stat <- ask
+  liftIO $ modifyIORef (header stat) mf
 
 openHashFile :: FilePath -> IO HashFileState
 openHashFile path = do
@@ -84,6 +97,10 @@ data Header =
   }
   deriving (Show)
 
+headerSize :: Int
+headerSize =
+  B.length $ fromHeader emptyHeader
+
 fromHeader :: Header -> B.ByteString
 fromHeader h = BB.toByteString $ BB.fromWrite $
   BB.writeByteString (magic h) `mappend`
@@ -110,10 +127,6 @@ writeVInt n
   | otherwise =
     BB.writeWord8 (fromIntegral $ n `mod` 128) `mappend`
     writeVInt (n `div` 128)
-
--- TODO: optimize
--- vlen :: Int -> Int
--- vlen = B.length . BB.toByteString . BB.fromWrite . writeVInt
 
 parseHeader :: A.Parser Header
 parseHeader =
@@ -198,10 +211,6 @@ initialHeader =
     rstart = fstart + fbsize * 6
     fsize = rstart
 
-headerSize :: Int
-headerSize =
-  B.length $ fromHeader emptyHeader
-
 initHashFile :: F.File -> IO ()
 initHashFile f = do
   let h = initialHeader
@@ -209,9 +218,6 @@ initHashFile f = do
   writeHeader f h
   F.write f (B.replicate (bucketSize h * 6) 0xff) (bucketStart h)
   F.write f (B.replicate (freeBlockSize h * 6) 0xff) (freeBlockStart h)
-
-emptyEntry :: Int
-emptyEntry = 0xffffffffffff
 
 readHeader :: F.File -> IO Header
 readHeader f =
@@ -231,6 +237,13 @@ data Record =
   }
   deriving (Show)
 
+emptyEntry :: Int
+emptyEntry = 0xffffffffffff
+
+-- TODO: optimize
+sizeRecord :: Record -> Int
+sizeRecord = B.length . fromRecord
+
 fromRecord :: Record -> B.ByteString
 fromRecord r = BB.toByteString $ BB.fromWrite $
   writeInt48le (rnext r) `mappend`
@@ -239,7 +252,6 @@ fromRecord r = BB.toByteString $ BB.fromWrite $
   BB.writeByteString (rkey r) `mappend`
   BB.writeByteString (rval r)
 
--- TODO: optimize
 parseRecord :: A.Parser Record
 parseRecord = do
   rn <- anyWord48le
@@ -254,10 +266,11 @@ parseRecordHeader = do
   vlen <- anyVInt
   return $ Record rn (B.replicate klen 0) (B.replicate vlen 0)
 
-readPartialRecord :: Int -> HashFileState -> IO (Record, Bool)
-readPartialRecord ofs HashFileState { file = f, header = hr } = do
-  h <- readIORef hr
-  bs <- F.read f 64 (recordStart h + ofs)
+readPartialRecord :: MonadIO m => Int -> HashFile m (Record, Bool)
+readPartialRecord ofs = do
+  f <- asks file
+  h <- askHeader
+  bs <- liftIO $ F.read f 64 (recordStart h + ofs)
   case A.parse parseRecord bs of
     A.Done _ r -> return (r, True)
     A.Partial _ -> case A.parse parseRecordHeader bs of
@@ -265,73 +278,79 @@ readPartialRecord ofs HashFileState { file = f, header = hr } = do
       _ -> error "readPartial: failed"
     _ -> error "readPartial: failed"
 
-readCompleteRecord :: Int -> Record -> HashFileState -> IO Record
-readCompleteRecord ofs r HashFileState { file = f, header = hr } = do
+readCompleteRecord :: MonadIO m => Int -> Record -> HashFile m Record
+readCompleteRecord ofs r = do
   let rsize = sizeRecord r
-  h <- readIORef hr
-  bs <- F.read f rsize (recordStart h + ofs)
+  f <- asks file
+  h <- askHeader
+  bs <- liftIO $ F.read f rsize (recordStart h + ofs)
   case A.parse parseRecord bs of
     A.Done _ v -> return v
     _ -> error "readComplete: failed"
 
-readCompleteRecord' :: Int -> HashFileState -> IO Record
-readCompleteRecord' ofs stat = do
-  (pr, whole) <- readPartialRecord ofs stat
+readCompleteRecord' :: MonadIO m => Int -> HashFile m Record
+readCompleteRecord' ofs = do
+  (pr, whole) <- readPartialRecord ofs
   if whole
     then return pr
-    else readCompleteRecord ofs pr stat
+    else readCompleteRecord ofs pr
 
-addRecord :: Record -> HashFileState -> IO Int
-addRecord r stat @ (HashFileState { header = hr }) = do
+addRecord :: MonadIO m => Record -> HashFile m Int
+addRecord r = do
   -- TODO: first search free pool
-  h <- readIORef hr
+  h <- askHeader
   let st = recordStart h
       end = fileSize h
-  nend <- writeRecord (end - st) r stat
-  writeIORef hr $ h { fileSize = st + nend }
+  nend <- writeRecord (end - st) r
+  putHeader $ h { fileSize = st + nend }
   return (end - st)
 
-writeRecord :: Int -> Record -> HashFileState -> IO Int
-writeRecord ofs r stat = do
-  h <- readIORef (header stat)
+writeRecord :: MonadIO m => Int -> Record -> HashFile m Int
+writeRecord ofs r = do
+  f <- asks file
+  h <- askHeader
   let bs = fromRecord r
-  F.write (file stat) bs (recordStart h + ofs)
+  liftIO $ F.write f bs (recordStart h + ofs)
   return $ ofs + B.length bs
 
--- TODO: optimize
-sizeRecord :: Record -> Int
-sizeRecord = B.length . fromRecord
+writeNext :: MonadIO m => Int -> Int -> HashFile m ()
+writeNext ofs next = do
+  f <- asks file
+  h <- askHeader
+  liftIO $ F.write
+    f
+    (BB.toByteString $ BB.fromWrite $ writeInt48le next)
+    (recordStart h + ofs)
 
-writeNext :: Int -> Int -> HashFileState -> IO ()
-writeNext ofs next stat = do
-  st <- fileSize <$> readIORef (header stat)
-  F.write (file stat) (BB.toByteString $ BB.fromWrite $ writeInt48le next) (st + ofs)
-
-readBucket :: Int -> HashFileState -> IO Int
-readBucket bix stat = do
-  bofs <- ((+ bix * 6) . bucketStart <$> readIORef (header stat))
-  bs <- F.read (file stat) 6 bofs
+readBucket :: (Functor m, MonadIO m) => Int -> HashFile m Int
+readBucket bix = do
+  bofs <- bucketStart <$> askHeader
+  f <- asks file
+  bs <- liftIO $ F.read f 6 (bofs + bix * 6)
   return $ toInt48le bs
 
-writeBucket :: Int -> Int -> HashFileState -> IO ()
-writeBucket bix val stat =
-  F.write
-  (file stat)
-  (BB.toByteString $ BB.fromWrite $ writeInt48le val)
-  =<< ((+ bix * 6) . bucketStart <$> readIORef (header stat))
+writeBucket :: (MonadIO m) => Int -> Int -> HashFile m ()
+writeBucket bix val = do
+  h <- askHeader
+  f <- asks file
+  liftIO $ F.write
+    f
+    (BB.toByteString $ BB.fromWrite $ writeInt48le val)
+    (bucketStart h + bix * 6)
 
-lookup :: B.ByteString -> HashFileState -> IO (Maybe B.ByteString)
-lookup key stat = do
-  mb <- lookup' key stat
+lookup :: (Functor m, MonadIO m) =>
+          B.ByteString -> HashFile m (Maybe B.ByteString)
+lookup key = do
+  mb <- lookup' key
   return $ rval . fst <$> mb
 
-lookup' :: B.ByteString -> HashFileState ->
-           IO (Maybe (Record, (Int, Int)))
-lookup' key stat = do
-  sz <- bucketSize <$> readIORef (header stat)
+lookup' :: (Functor m, MonadIO m) =>
+           B.ByteString -> HashFile m (Maybe (Record, (Int, Int)))
+lookup' key = do
+  sz <- bucketSize <$> askHeader
   let ha = hash key
   let bix = ha `mod` sz
-  link <- readBucket bix stat
+  link <- readBucket bix
   findLink emptyEntry link
 
   where
@@ -340,27 +359,27 @@ lookup' key stat = do
         return Nothing
       | otherwise = do
         -- TODO: FIXME: when read less than key length
-        (r, whole) <- readPartialRecord cur stat
+        (r, whole) <- readPartialRecord cur
         if rkey r == key
           then
           if whole
             then Just <$> return (r, (bef, cur))
-            else Just . (, (bef, cur)) <$> readCompleteRecord cur r stat
+            else Just . (, (bef, cur)) <$> readCompleteRecord cur r
           else findLink cur (rnext r)
 
-insert :: B.ByteString -> B.ByteString -> HashFileState -> IO ()
-insert key val stat = do
-  sz <- bucketSize <$> readIORef (header stat)
+insert :: (Functor m, MonadIO m) => B.ByteString -> B.ByteString -> HashFile m ()
+insert key val = do
+  sz <- bucketSize <$> askHeader
   let ha = hash key
   let bix = ha `mod` sz
   let nr = Record emptyEntry key val
-  toplink <- readBucket bix stat
-  mbv <- lookup' key stat
+  toplink <- readBucket bix
+  mbv <- lookup' key
   case mbv of
     Nothing -> do
-      nhead <- addRecord nr stat
-      writeBucket bix nhead stat
-      incRecordSize stat
+      nhead <- addRecord nr
+      writeBucket bix nhead
+      incRecordSize
     Just (r, (bef, cur)) -> do
       let curSize = sizeRecord r
           newSize = sizeRecord nr
@@ -370,72 +389,71 @@ insert key val stat = do
       if curSize >= newSize && curSize <= newSize * 2
         then do
         -- replace
-        _ <- writeRecord cur (r { rval = val }) stat
+        _ <- writeRecord cur (r { rval = val })
         return ()
         else do
         -- remove and add
         -- 1. rewrite before's link
         when (bef /= emptyEntry) $
           -- if current record has parent
-          writeNext bef (rnext r) stat
+          writeNext bef (rnext r)
         -- 2. alloc new record
         let nlink = if bef /= emptyEntry then toplink else rnext r
-        nhead <- addRecord (nr { rnext = nlink }) stat
+        nhead <- addRecord (nr { rnext = nlink })
         -- 3. rewrite bucket's link
-        writeBucket bix nhead stat
+        writeBucket bix nhead
         -- 4. add current to free pool
         -- TODO
         return ()
 
-remove :: B.ByteString -> HashFileState -> IO ()
-remove key stat = do
-  sz <- bucketSize <$> readIORef (header stat)
+remove :: (Functor m, MonadIO m) => B.ByteString -> HashFile m ()
+remove key = do
+  sz <- bucketSize <$> askHeader
   let ha = hash key
   let bix = ha `mod` sz
-  mbv <- lookup' key stat
+  mbv <- lookup' key
   case mbv of
     Nothing ->
       return ()
     Just (r, (bef, _)) -> do
       if bef /= emptyEntry
         then do
-        writeNext bef (rnext r) stat
+        writeNext bef (rnext r)
         else do
-        writeBucket bix (rnext r) stat
+        writeBucket bix (rnext r)
       -- TODO: add current to free pool
-      decRecordSize stat
+      decRecordSize
       return ()
 
-incRecordSize :: HashFileState -> IO ()
+incRecordSize :: MonadIO m => HashFile m ()
 incRecordSize = modifyHeader (\h -> h { recordSize = recordSize h + 1 })
 
-decRecordSize :: HashFileState -> IO ()
+decRecordSize :: MonadIO m => HashFile m ()
 decRecordSize = modifyHeader (\h -> h { recordSize = recordSize h - 1 })
 
 --
 
-instance MonadControlIO m => H.DB (HashFile m) where
-  accept key f = withState $ \stat -> do
-    mval <- liftIO $ lookup key stat
+instance (Functor m, MonadControlIO m) => H.DB (HashFile m) where
+  accept key f = withLock $ do
+    mval <- lookup key
     (act, r) <- f mval
     case act of
       H.Replace val ->
-        liftIO $ insert key val stat
+        insert key val
       H.Remove ->
-        liftIO $ remove key stat
+        remove key
       H.Nop ->
         return ()
     return r
   
-  count = withState $ \stat -> do
-    h <- liftIO $ readIORef $ header stat
-    return $ recordSize h
+  count = withLock $ do
+    recordSize <$> askHeader
   
-  clear = withState $ \stat -> do
-    liftIO $ initHashFile (file stat)
-    h <- liftIO $ readHeader (file stat)
-    liftIO $ writeIORef (header stat) h
-    
+  clear = withLock $ do
+    f <- asks file
+    liftIO $ initHashFile f
+    putHeader =<< liftIO (readHeader f)
+
   enum = return go where
     go step = do
       stat <- lift $ HashFile ask
@@ -447,10 +465,10 @@ instance MonadControlIO m => H.DB (HashFile m) where
       | bix >= bsize =
         E.returnI step
       | otherwise = do
-        pos <- liftIO $ readBucket bix stat
+        pos <- lift $ readBucket bix
         if pos /= emptyEntry
           then do
-          kvs <- liftIO $ readLink pos stat
+          kvs <- lift $ readLink pos
           f (E.Chunks kvs) E.>>== go' (bix+1) bsize stat
           else
           go' (bix+1) bsize stat step
@@ -458,21 +476,21 @@ instance MonadControlIO m => H.DB (HashFile m) where
     go' _ _ _ step =
       E.returnI step
     
-readLink :: Int -> HashFileState -> IO [(B.ByteString, B.ByteString)]
-readLink pos stat
+readLink :: MonadIO m => Int -> HashFile m [(B.ByteString, B.ByteString)]
+readLink pos
   | pos == emptyEntry = return []
   | otherwise = do
-    r  <- readCompleteRecord' pos stat
-    rs <- readLink (rnext r) stat
+    r  <- readCompleteRecord' pos
+    rs <- readLink (rnext r)
     return $ (rkey r, rval r) : rs
 
-withState :: MonadControlIO m => (HashFileState -> HashFile m a) -> HashFile m a
-withState f = do
+withLock :: MonadControlIO m => HashFile m a -> HashFile m a
+withLock m = do
   l <- HashFile (asks lock)
   MC.bracket
     (liftIO $ takeMVar l)
     (liftIO . putMVar l)
-    (\_ -> f =<< HashFile ask)
+    (const m)
 
 runHashFile :: MonadControlIO m => HashFileState -> HashFile m a -> m a
 runHashFile stat db = do
