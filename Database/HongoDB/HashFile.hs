@@ -1,4 +1,4 @@
-{-# Language MultiParamTypeClasses, OverloadedStrings, GeneralizedNewtypeDeriving, TupleSections #-}
+{-# Language ScopedTypeVariables, MultiParamTypeClasses, OverloadedStrings, GeneralizedNewtypeDeriving, TupleSections #-}
 
 module Database.HongoDB.HashFile (
   HashFile,
@@ -22,6 +22,7 @@ import qualified Data.Attoparsec.Binary as A
 import Data.Bits
 import qualified Data.ByteString as B
 import qualified Data.Enumerator as E
+import qualified Data.Enumerator.List as EL
 import Data.Hashable
 import Data.Int
 import Data.IORef
@@ -367,7 +368,7 @@ lookup' key = do
             else Just . (, (bef, cur)) <$> readCompleteRecord cur r
           else findLink cur (rnext r)
 
-insert :: (Functor m, MonadIO m) => B.ByteString -> B.ByteString -> HashFile m ()
+insert :: (Functor m, MonadControlIO m) => B.ByteString -> B.ByteString -> HashFile m ()
 insert key val = do
   sz <- bucketSize <$> askHeader
   let ha = hash key
@@ -405,6 +406,35 @@ insert key val = do
         -- 4. add current to free pool
         -- TODO
         return ()
+  checkCapacity
+
+maxBucketRatio :: Double
+maxBucketRatio = 0.9
+
+checkCapacity :: (Functor m, MonadControlIO m) => HashFile m ()
+checkCapacity = do
+  h <- askHeader
+  let ratio = fromIntegral (recordSize h) /
+              fromIntegral (bucketSize h)
+  when (ratio >= maxBucketRatio) $
+    doubleBucket
+
+doubleBucket :: forall m . (Functor m, MonadControlIO m) => HashFile m ()
+doubleBucket = do
+  f <- liftIO $ openHashFile "tmp"
+  e <- H.enum
+  runHashFile f $ do
+    E.run_ $ ((e E.$$ go) :: E.Iteratee (B.ByteString, B.ByteString) (HashFile m) ())
+  where
+    go :: E.Iteratee (B.ByteString, B.ByteString) (HashFile m) ()
+    go = do
+      mkv <- EL.head
+      case mkv of
+        Just (key, val) -> do
+          lift $ H.set key val
+          go
+        Nothing -> do
+          return ()
 
 remove :: (Functor m, MonadIO m) => B.ByteString -> HashFile m ()
 remove key = do
