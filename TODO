@@ -7,7 +7,7 @@
 - HashFile
 -- Missing methods -- DONE!
 -- Free block pool
--- Resize
+-- Resize -- DONE!
 -- 0.0.1 ?
 -- GC
 -- Transaction support

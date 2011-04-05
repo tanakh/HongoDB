@@ -3,7 +3,8 @@
 module Database.HongoDB.HashFile (
   HashFile,
   HashFileState,
-  openHashFile, closeHashFile,
+  openHashFile, openHashFile',
+  closeHashFile,
   runHashFile,
   ) where
 
@@ -21,21 +22,24 @@ import qualified Data.Attoparsec as A
 import qualified Data.Attoparsec.Binary as A
 import Data.Bits
 import qualified Data.ByteString as B
-import qualified Data.Enumerator as E
-import qualified Data.Enumerator.List as EL
+import Data.Enumerator as E
+import Data.Enumerator.List as EL
 import Data.Hashable
 import Data.Int
 import Data.IORef
 import Data.Monoid
 import System.Directory
 
-import Prelude hiding (lookup)
+import Prelude as P hiding (lookup)
 
 magicString :: B.ByteString
 magicString = "HHDB"
 
 formatVersion :: (Int8, Int8)
 formatVersion = (0, 0)
+
+defaultBucketSize :: Int
+defaultBucketSize = 2 -- 1024
 
 newtype HashFile m a =
   HashFile { unHashFile :: ReaderT HashFileState m a }
@@ -47,7 +51,8 @@ instance Monad m => MonadReader HashFileState (HashFile m) where
 
 data HashFileState =
   HashFileState
-  { file   :: F.File
+  { file   :: IORef F.File
+  , filename :: FilePath
   , header :: IORef Header
   , lock :: MVar ()
   }
@@ -65,24 +70,39 @@ modifyHeader mf = do
   stat <- ask
   liftIO $ modifyIORef (header stat) mf
 
+askFile :: MonadIO m => HashFile m F.File
+askFile =
+  liftIO . readIORef =<< asks file
+
+putFile :: MonadIO m => F.File -> HashFile m ()
+putFile f =
+  liftIO . flip writeIORef f =<< asks file
+
 openHashFile :: FilePath -> IO HashFileState
-openHashFile path = do
+openHashFile path = openHashFile' path defaultBucketSize
+
+openHashFile' :: FilePath -> Int -> IO HashFileState
+openHashFile' path bsize = do
   b <- doesFileExist path
   f <- F.open path
   unless b $
-    initHashFile f
-  h <- newIORef =<< readHeader f
-  l <- newMVar ()
+    initHashFile f bsize
+  fr <- newIORef f
+  hr <- newIORef =<< readHeader f
+  
+  l  <- newMVar ()
   return $ HashFileState
-    { file = f
-    , header = h
+    { file = fr
+    , filename = path
+    , header = hr
     , lock = l
     }
 
 closeHashFile :: HashFileState -> IO ()
 closeHashFile stat = do
+  f <- readIORef $ file stat
   h <- readIORef $ header stat
-  writeHeader (file stat) h
+  writeHeader f h
 
 data Header =
   Header
@@ -176,7 +196,7 @@ toInt48le bs =
       error "toInt48le: fail"
 
 nextPrime :: Int -> Int
-nextPrime n = head $ filter isPrime [n..] where
+nextPrime n = P.head $ P.filter isPrime [n..] where
   isPrime a = and [ a`mod`i /= 0
                   | i <- [2 .. floor (sqrt (fromIntegral a) :: Double)]]
 
@@ -205,16 +225,16 @@ initialHeader =
   , recordStart = rstart
   }
   where
-    bsize = nextPrime 1024
+    bsize = 0
     fbsize = 64
     bstart = headerSize
     fstart = bstart + bsize * 6
     rstart = fstart + fbsize * 6
     fsize = rstart
 
-initHashFile :: F.File -> IO ()
-initHashFile f = do
-  let h = initialHeader
+initHashFile :: F.File -> Int -> IO ()
+initHashFile f bsize = do
+  let h = initialHeader { bucketSize = nextPrime bsize }
   F.clear f
   writeHeader f h
   F.write f (B.replicate (bucketSize h * 6) 0xff) (bucketStart h)
@@ -269,7 +289,7 @@ parseRecordHeader = do
 
 readPartialRecord :: MonadIO m => Int -> HashFile m (Record, Bool)
 readPartialRecord ofs = do
-  f <- asks file
+  f <- askFile
   h <- askHeader
   bs <- liftIO $ F.read f 64 (recordStart h + ofs)
   case A.parse parseRecord bs of
@@ -282,7 +302,7 @@ readPartialRecord ofs = do
 readCompleteRecord :: MonadIO m => Int -> Record -> HashFile m Record
 readCompleteRecord ofs r = do
   let rsize = sizeRecord r
-  f <- asks file
+  f <- askFile
   h <- askHeader
   bs <- liftIO $ F.read f rsize (recordStart h + ofs)
   case A.parse parseRecord bs of
@@ -308,7 +328,7 @@ addRecord r = do
 
 writeRecord :: MonadIO m => Int -> Record -> HashFile m Int
 writeRecord ofs r = do
-  f <- asks file
+  f <- askFile
   h <- askHeader
   let bs = fromRecord r
   liftIO $ F.write f bs (recordStart h + ofs)
@@ -316,7 +336,7 @@ writeRecord ofs r = do
 
 writeNext :: MonadIO m => Int -> Int -> HashFile m ()
 writeNext ofs next = do
-  f <- asks file
+  f <- askFile
   h <- askHeader
   liftIO $ F.write
     f
@@ -326,14 +346,14 @@ writeNext ofs next = do
 readBucket :: (Functor m, MonadIO m) => Int -> HashFile m Int
 readBucket bix = do
   bofs <- bucketStart <$> askHeader
-  f <- asks file
+  f <- askFile
   bs <- liftIO $ F.read f 6 (bofs + bix * 6)
   return $ toInt48le bs
 
 writeBucket :: (MonadIO m) => Int -> Int -> HashFile m ()
 writeBucket bix val = do
+  f <- askFile
   h <- askHeader
-  f <- asks file
   liftIO $ F.write
     f
     (BB.toByteString $ BB.fromWrite $ writeInt48le val)
@@ -421,18 +441,33 @@ checkCapacity = do
 
 doubleBucket :: forall m . (Functor m, MonadControlIO m) => HashFile m ()
 doubleBucket = do
-  f <- liftIO $ openHashFile "tmp"
+  h <- askHeader
+  
+  name <- asks filename
+  let tmpName = name ++ ".tmp"
+  
+  f <- liftIO $ openHashFile' tmpName (bucketSize h * 2)
   e <- H.enum
-  runHashFile f $ do
-    E.run_ $ ((e E.$$ go) :: E.Iteratee (B.ByteString, B.ByteString) (HashFile m) ())
+  -- TODO: may be not efficient
+  run_ $ e $$ go f
+  
+  liftIO $ closeHashFile f
+  liftIO . closeHashFile =<< ask
+  
+  liftIO $ renameFile tmpName name
+  
+  nf <- liftIO $ openHashFile name
+  s <- ask
+  liftIO $ writeIORef (file s) =<< readIORef (file nf)
+  liftIO $ writeIORef (header s) =<< readIORef (header nf)
+  
   where
-    go :: E.Iteratee (B.ByteString, B.ByteString) (HashFile m) ()
-    go = do
+    go f = do
       mkv <- EL.head
       case mkv of
         Just (key, val) -> do
-          lift $ H.set key val
-          go
+          lift $ runHashFile f $ H.set key val
+          go f
         Nothing -> do
           return ()
 
@@ -480,15 +515,14 @@ instance (Functor m, MonadControlIO m) => H.DB (HashFile m) where
     recordSize <$> askHeader
   
   clear = withLock $ do
-    f <- asks file
-    liftIO $ initHashFile f
+    f <- askFile
+    liftIO $ initHashFile f defaultBucketSize
     putHeader =<< liftIO (readHeader f)
 
   enum = return go where
     go step = do
       stat <- lift $ HashFile ask
       h <- liftIO $ readIORef (header stat)
-      liftIO $ print h
       go' 0 (bucketSize h) stat step
     
     go' bix bsize stat step@(E.Continue f)
