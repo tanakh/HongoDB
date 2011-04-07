@@ -214,8 +214,8 @@ emptyHeader =
   , recordStart = 0
   }
 
-initialHeader :: Header
-initialHeader =
+initialHeader :: Int -> Header
+initialHeader bsize =
   emptyHeader
   { bucketSize = bsize
   , freeBlockSize = fbsize
@@ -225,7 +225,6 @@ initialHeader =
   , recordStart = rstart
   }
   where
-    bsize = 0
     fbsize = 64
     bstart = headerSize
     fstart = bstart + bsize * 6
@@ -234,7 +233,7 @@ initialHeader =
 
 initHashFile :: F.File -> Int -> IO ()
 initHashFile f bsize = do
-  let h = initialHeader { bucketSize = nextPrime bsize }
+  let h = initialHeader (nextPrime bsize)
   F.clear f
   writeHeader f h
   F.write f (B.replicate (bucketSize h * 6) 0xff) (bucketStart h)
@@ -346,6 +345,7 @@ writeNext ofs next = do
 readBucket :: (Functor m, MonadIO m) => Int -> HashFile m Int
 readBucket bix = do
   bofs <- bucketStart <$> askHeader
+  h <- askHeader
   f <- askFile
   bs <- liftIO $ F.read f 6 (bofs + bix * 6)
   return $ toInt48le bs

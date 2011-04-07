@@ -2,16 +2,19 @@
 
 import Database.HongoDB
 
-import Control.Monad
+import Control.Monad as M
 import Control.Monad.Trans
+import qualified Data.ByteString.Char8 as C
 import Data.Enumerator as E
 import Data.Enumerator.List as EL
 import System.Directory
+import System.Random
 
 main :: IO ()
 main = do
-  testHashMem
-  testHashFile
+  -- testHashMem
+  -- testHashFile
+  bench
 
 testHashMem :: IO ()
 testHashMem = do
@@ -85,3 +88,17 @@ testHashFile = do
   closeHashFile f
   
   return ()
+
+bench :: IO ()
+bench = do
+  print "bench"
+  e <- doesFileExist fname
+  when e $ removeFile fname
+  f <- openHashFile fname
+  runHashFile f $ do
+    forM_ [1..10000] $ \i -> do
+      key <- liftIO $ M.replicateM 10 (randomRIO ('a', 'z'))
+      val <- liftIO $ M.replicateM 10 (randomRIO ('a', 'z'))
+      liftIO $ print (i, key, val)
+      set (C.pack key) (C.pack val)
+  closeHashFile f
