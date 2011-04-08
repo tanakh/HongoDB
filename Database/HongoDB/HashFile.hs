@@ -187,6 +187,9 @@ toHeader bs =
     _ ->
       error "toHeader: no header"
 
+fromInt48le :: Int -> B.ByteString
+fromInt48le = BB.toByteString . BB.fromWrite . writeInt48le
+
 toInt48le :: B.ByteString -> Int
 toInt48le bs =
   case A.parse anyWord48le bs of
@@ -315,15 +318,48 @@ readCompleteRecord' ofs = do
     then return pr
     else readCompleteRecord ofs pr
 
+lookupFreeBlock :: MonadIO m => Int -> HashFile m (Maybe Int)
+lookupFreeBlock size = do
+  f <- askFile
+  h <- askHeader
+  locs <- liftIO $ F.read f 6 (freeBlockStart h + ix * 6)
+  let loc = toInt48le locs
+  if loc == emptyEntry
+    then do
+    return Nothing
+    else do
+    next <- liftIO $ F.read f 6 (recordStart h + loc)
+    liftIO $ F.write f next (freeBlockStart h + ix * 6)
+    return $ Just loc
+  where
+    ix = exponent (fromIntegral size :: Double)
+
+addFreeBlock :: MonadIO m => Int -> Record -> HashFile m ()
+addFreeBlock ofs r = do
+  f <- askFile
+  h <- askHeader
+  liftIO $ do
+    bef <- F.read f 6 (freeBlockStart h + ix * 6)
+    F.write f bef (recordStart h + ofs)
+    F.write f (fromInt48le ofs) (freeBlockStart h + ix * 6)
+  where
+    ix = max 0 (exponent (fromIntegral $ sizeRecord r :: Double) - 1)
+
 addRecord :: MonadIO m => Record -> HashFile m Int
 addRecord r = do
-  -- TODO: first search free pool
   h <- askHeader
+  mbloc <- lookupFreeBlock (sizeRecord r)
   let st = recordStart h
       end = fileSize h
-  nend <- writeRecord (end - st) r
-  putHeader $ h { fileSize = st + nend }
-  return (end - st)
+  case mbloc of
+    Nothing -> do
+      let ofs = end - st
+      nofs <- writeRecord ofs r
+      putHeader $ h { fileSize = st + nofs }
+      return ofs
+    Just ofs -> do
+      _ <- writeRecord ofs r
+      return ofs
 
 writeRecord :: MonadIO m => Int -> Record -> HashFile m Int
 writeRecord ofs r = do
@@ -424,7 +460,7 @@ insert key val = do
         -- 3. rewrite bucket's link
         writeBucket bix nhead
         -- 4. add current to free pool
-        -- TODO
+        addFreeBlock cur r
         return ()
   checkCapacity
 
@@ -480,15 +516,14 @@ remove key = do
   case mbv of
     Nothing ->
       return ()
-    Just (r, (bef, _)) -> do
+    Just (r, (bef, cur)) -> do
       if bef /= emptyEntry
         then do
         writeNext bef (rnext r)
         else do
         writeBucket bix (rnext r)
-      -- TODO: add current to free pool
+      addFreeBlock cur r
       decRecordSize
-      return ()
 
 incRecordSize :: MonadIO m => HashFile m ()
 incRecordSize = modifyHeader (\h -> h { recordSize = recordSize h + 1 })
