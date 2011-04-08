@@ -1,4 +1,4 @@
-{-# Language ScopedTypeVariables, MultiParamTypeClasses, OverloadedStrings, GeneralizedNewtypeDeriving, TupleSections #-}
+{-# Language MultiParamTypeClasses, OverloadedStrings, GeneralizedNewtypeDeriving, TupleSections #-}
 
 module Database.HongoDB.HashFile (
   HashFile,
@@ -476,7 +476,7 @@ checkCapacity = do
   when (ratio >= maxBucketRatio) $
     doubleBucket
 
-doubleBucket :: forall m . (Functor m, MonadControlIO m) => HashFile m ()
+doubleBucket :: (Functor m, MonadControlIO m) => HashFile m ()
 doubleBucket = do
   h <- askHeader
   
