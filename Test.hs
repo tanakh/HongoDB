@@ -12,9 +12,9 @@ import System.Random
 
 main :: IO ()
 main = do
-  -- testHashMem
-  -- testHashFile
-  bench
+  testHashMem
+  testHashFile
+  benchHashFile
 
 testHashMem :: IO ()
 testHashMem = do
@@ -89,16 +89,17 @@ testHashFile = do
   
   return ()
 
-bench :: IO ()
-bench = do
-  print "bench"
+benchHashFile :: IO ()
+benchHashFile = do
+  let iter = 100000
   e <- doesFileExist fname
   when e $ removeFile fname
-  f <- openHashFile fname
+  f <- openHashFile' (iter*2) fname
   runHashFile f $ do
-    forM_ [1..10000] $ \i -> do
+    forM_ [1..iter] $ \i -> do
       key <- liftIO $ M.replicateM 10 (randomRIO ('a', 'z'))
       val <- liftIO $ M.replicateM 10 (randomRIO ('a', 'z'))
-      liftIO $ print (i, key, val)
+      -- liftIO $ print (i, key, val)
+      when (i `mod` 10000 == 0) $ liftIO $ print i
       set (C.pack key) (C.pack val)
   closeHashFile f

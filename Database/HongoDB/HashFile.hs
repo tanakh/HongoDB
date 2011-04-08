@@ -39,7 +39,7 @@ formatVersion :: (Int8, Int8)
 formatVersion = (0, 0)
 
 defaultBucketSize :: Int
-defaultBucketSize = 2 -- 1024
+defaultBucketSize = 1024
 
 newtype HashFile m a =
   HashFile { unHashFile :: ReaderT HashFileState m a }
@@ -79,10 +79,10 @@ putFile f =
   liftIO . flip writeIORef f =<< asks file
 
 openHashFile :: FilePath -> IO HashFileState
-openHashFile path = openHashFile' path defaultBucketSize
+openHashFile = openHashFile' defaultBucketSize
 
-openHashFile' :: FilePath -> Int -> IO HashFileState
-openHashFile' path bsize = do
+openHashFile' :: Int -> FilePath -> IO HashFileState
+openHashFile' bsize path = do
   b <- doesFileExist path
   f <- F.open path
   unless b $
@@ -446,7 +446,7 @@ doubleBucket = do
   name <- asks filename
   let tmpName = name ++ ".tmp"
   
-  f <- liftIO $ openHashFile' tmpName (bucketSize h * 2)
+  f <- liftIO $ openHashFile' (bucketSize h * 2) tmpName
   e <- H.enum
   -- TODO: may be not efficient
   run_ $ e $$ go f
@@ -510,14 +510,17 @@ instance (Functor m, MonadControlIO m) => H.DB (HashFile m) where
       H.Nop ->
         return ()
     return r
+  {-# INLINABLE accept #-}
   
   count = withLock $ do
     recordSize <$> askHeader
+  {-# INLINABLE count #-}
   
   clear = withLock $ do
     f <- askFile
     liftIO $ initHashFile f defaultBucketSize
     putHeader =<< liftIO (readHeader f)
+  {-# INLINABLE clear #-}
 
   enum = return go where
     go step = do

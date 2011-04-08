@@ -82,3 +82,5 @@ Test-suite test
   Build-depends:       base >= 4 && < 5
                      , process >= 1.0 && < 1.1
                      , random >= 1.0 && < 1.1
+
+  Ghc-options:         -rtsopts -auto-all
