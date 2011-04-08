@@ -74,9 +74,11 @@ askFile :: MonadIO m => HashFile m F.File
 askFile =
   liftIO . readIORef =<< asks file
 
+{-
 putFile :: MonadIO m => F.File -> HashFile m ()
 putFile f =
   liftIO . flip writeIORef f =<< asks file
+-}
 
 openHashFile :: FilePath -> IO HashFileState
 openHashFile = openHashFile' defaultBucketSize
@@ -381,7 +383,6 @@ writeNext ofs next = do
 readBucket :: (Functor m, MonadIO m) => Int -> HashFile m Int
 readBucket bix = do
   bofs <- bucketStart <$> askHeader
-  h <- askHeader
   f <- askFile
   bs <- liftIO $ F.read f 6 (bofs + bix * 6)
   return $ toInt48le bs
@@ -481,6 +482,9 @@ doubleBucket = do
   
   name <- asks filename
   let tmpName = name ++ ".tmp"
+  liftIO $ do
+    b <- doesFileExist tmpName
+    when b $ removeFile tmpName
   
   f <- liftIO $ openHashFile' (bucketSize h * 2) tmpName
   e <- H.enum

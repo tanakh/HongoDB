@@ -41,6 +41,15 @@ testHashFile = do
   e <- doesFileExist fname
   when e $ removeFile fname
   f <- openHashFile fname
+  
+  runHashFile f $ do
+    set "a" "hogehogehogehogehogehogehogeho"
+    remove "a"
+    liftIO . print =<< get "a"
+    set "a" "mogemoge"
+    liftIO . print =<< get "a"
+    remove "a"
+  
   runHashFile f $ do
     liftIO . print =<< count
     set "a" "b"
@@ -95,6 +104,8 @@ benchHashFile = do
   e <- doesFileExist fname
   when e $ removeFile fname
   f <- openHashFile' (iter*2) fname
+  
+  {-
   runHashFile f $ do
     forM_ [1..iter] $ \i -> do
       key <- liftIO $ M.replicateM 10 (randomRIO ('a', 'z'))
@@ -102,4 +113,19 @@ benchHashFile = do
       -- liftIO $ print (i, key, val)
       when (i `mod` 10000 == 0) $ liftIO $ print i
       set (C.pack key) (C.pack val)
+      -}
+
+  runHashFile f $ do
+    forM_ [1..iter] $ \i -> do
+      kl <- liftIO $ randomRIO (1, 3)
+      vl <- liftIO $ randomRIO (0, 32)
+      b <- liftIO $ randomRIO (False, True)
+      key <- liftIO $ M.replicateM kl (randomRIO ('a', 'z'))
+      val <- liftIO $ M.replicateM vl (randomRIO ('a', 'z'))
+      -- liftIO $ print (i, key, val)
+      when (i `mod` 10000 == 0) $ liftIO $ print i
+      
+      if b
+        then set (C.pack key) (C.pack val)
+        else remove (C.pack key) >> return ()
   closeHashFile f
